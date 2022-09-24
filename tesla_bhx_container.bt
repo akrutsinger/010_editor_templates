@@ -1,0 +1,77 @@
+//------------------------------------------------
+//--- 010 Editor v12.0.1 Binary Template
+//
+//      File: tesla_bhx_container.bt
+//   Authors: Austyn Krutsinger
+//     Email: akrutsinger@gmail.com
+//   Version: 0.1
+//   Purpose: Parse Tesla binary firmware files
+//  Category: Binary
+// File Mask: *.bhx
+//  ID Bytes: 47 48 44 52   // GHDR
+//   History:
+//   0.1 - 2022-09-07 akrutsinger: Initial Release
+//------------------------------------------------
+
+// Global Header
+typedef struct {
+    char    magic[4];               // "GHDR"
+    uint32  num_sections;           // Number of sections
+    uint32  total_container_size;   // Total size of all sections in bytes
+} GlobalHeader;
+
+typedef struct {
+    char    magic[4];       // "SHDR"
+    uint32  num_sections;   // Number of elements within this section
+    uint32  unk1;           // NOTE: Could be file offset where section data starts?
+    uint32  section_size;   // Size of section in bytes
+    uint32  crc32;          // CRC-32 of section data
+} SectionHeader;
+
+local uint64 bad_crc_count = 0;
+local uint64 section_count = 0;
+
+//------------------------------------------------------------------------------
+// Begin Prcessing File
+//------------------------------------------------------------------------------
+
+// Define the headers
+BigEndian();
+GlobalHeader global_header;
+
+// Check for valid header
+if(global_header.magic != "GHDR") {
+    Warning("File is not a valid BHX file. Template stopped.");
+    return -1;
+}
+
+// List section headers
+SectionHeader section_headers[global_header.num_sections];
+
+// Data for each section
+
+// TODO: I've only ever seen firmware images with only 1 section defined in the
+//       GlobalHeader and only 1 sub-section defined in the SectionHeader. The
+//       structure of this search for the data segments may need to change
+//       depending how they chose to organize multiple sections.
+local uint32 i = 0;
+local uint32 s = 0;
+for (i = 0; i < global_header.num_sections; ++i) {
+    for (s = 0; s < section_headers[i].num_sections; ++s) {
+        ++section_count;
+
+        byte data[section_headers[s].section_size];
+
+        local uint32 crc32_checksum = Checksum(CHECKSUM_CRC32, startof(data), section_headers[s].section_size, -1, -1);
+        if (section_headers[s].crc32 != crc32_checksum) {
+            Warning("Header CRC mismatch in Section #%Lu", section_count);
+			Printf("Header CRC mismatch in Section #%Lu: expected CRC is 0x%X, got 0x%X\n", section_count, crc32_checksum, section_headers[s].crc32);
+            ++bad_crc_count;
+        }
+    }
+}
+
+if (bad_crc_count) {
+	Printf("%Lu sections corrupted.\n", bad_crc_count);
+}
+Printf("Done. %Lu sections processed.\n", section_count);
