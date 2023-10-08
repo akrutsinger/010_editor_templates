@@ -1,0 +1,97 @@
+//------------------------------------------------
+//--- 010 Editor v12.0.1 Binary Template
+//
+//      File: tesla_sbfh_firmware.bt
+//   Authors: Austyn Krutsinger
+//     Email: akrutsinger@gmail.com
+//   Version: 0.1
+//   Purpose: Parse Tesla binary firmware files. Currently specifically written for the Tesla Wall Charger.
+//  Category: Binary
+// File Mask: *.bin
+//  ID Bytes: 53 42 46 48   // SBFH
+//   History:
+//   0.1 - 2023-10-07 akrutsinger: Initial Release
+//------------------------------------------------
+
+// Global File Header
+typedef struct {
+    char    magic[4];               // "SBFH"
+    uint32  header_size;
+    char    unk[7];
+    uint32  firmware_size;   // Total size of the firmware blob
+    byte    hdr[header_size - 4 - sizeof(uint32) - 7 - sizeof(uint32)]; // The entire header size includes the u32 of the size and the 4-byte signature
+} GlobalHeader;
+
+// Marvell Firmware Header
+// NOTE: reference used: https://github.com/wfr/mrvl-88mw30x-firmware-tools/blob/master/README.md
+typedef struct {
+    char    magic[4];   // "MRVL"
+    uint32  unk_const;  // Hardcoded in the official SDK. Constant of 0x2E9CF17B
+    uint32  creation_time;  // UNIX timestamp (local timezone)
+    uint32  num_segments;   // Number of program segments. Must be <= 9
+    uint32  elf_version;    // identical to Elf32_EHdr.e_version
+} MarvellFirmwareHeader;
+
+// Marvell Segment Header
+typedef struct {
+    uint32  segment_type;   // Always 2
+    uint32  offset;         // Location of the segment data in this file
+    uint32  size;           // Size of segment data. Must be divisible by 4.
+    uint32  virtual_address;    // Virtual memory address
+    uint32  crc_checksum;       // CRC-32 checksum of the padded data segment.
+                                // This variant of CRC-32:
+                                //  * no preset to 0xffffffff (-1)
+                                //  * no post-invert
+} MarvellSegmentHeader;
+
+
+//------------------------------------------------------------------------------
+// Begin Prcessing File
+//------------------------------------------------------------------------------
+local uint64 bad_crc_count = 0;
+local uint64 segment_count = 0;
+
+// Define the headers
+LittleEndian();
+GlobalHeader global_header;
+
+// Check for valid header
+if (global_header.magic != "SBFH") {
+    Warning("File is not a valid SBFH file. Template stopped.");
+    return -1;
+}
+
+// Marvell Wi-Fi module firmware header
+MarvellFirmwareHeader   firmware_header;
+if (firmware_header.magic != "MRVL") {
+    Warning("Firmware is not a valid Marvell firmware. Template stopped.");
+    return -1;
+}
+
+// List section headers
+MarvellSegmentHeader    segment_header[firmware_header.num_segments];
+
+
+// Data for each section
+local uint32 i = 0;
+local uint32 crc32_checksum = 0;
+for (i = 0; i < firmware_header.num_segments; ++i) {
+    FSeek(global_header.header_size + segment_header[i].offset);
+    struct {
+        byte data[segment_header[i].size];
+    } Data;
+    ++segment_count;
+
+    // TODO: implement checksum checks, though I'm not entirely sure what initial value and polynomial values were used.
+//    crc32_checksum = Checksum(CHECKSUM_CRC32, startof(Data), segment_header[i].size, -1, -1);
+//    if (segment_header[i].crc_checksum != crc32_checksum) {
+//        Warning("Header CRC mismatch in Section #%Lu", segment_count);
+//		Printf("Header CRC mismatch in Section #%Lu: expected CRC is 0x%X, got 0x%X\n", segment_count, crc32_checksum, segment_header[i].crc_checksum);
+//        ++bad_crc_count;
+//    }
+}
+
+if (bad_crc_count) {
+	Printf("%Lu sections corrupted.\n", bad_crc_count);
+}
+Printf("Done. %Lu segments processed.\n", segment_count);
